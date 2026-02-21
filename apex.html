@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>APEX DRIVE | V2.1</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700;900&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+    <style>
+        :root { --ui-bg: #0a0a0c; --accent: #ffffff; }
+        body { margin: 0; padding: 0; background: #050505; font-family: 'Inter', sans-serif; overflow: hidden; color: #e0e0e0; }
+
+        /* HUD */
+        nav {
+            position: fixed; top: 0; width: 100%; padding: 25px 40px;
+            display: flex; justify-content: space-between; align-items: center;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.8), transparent);
+            z-index: 1000; box-sizing: border-box;
+        }
+        .engine-id { font-family: 'JetBrains Mono'; font-weight: 700; font-size: 1.2rem; }
+        .stats-group { display: flex; gap: 20px; }
+        .stat-item { background: rgba(255,255,255,0.05); padding: 8px 15px; border: 1px solid rgba(255,255,255,0.1); font-family: 'JetBrains Mono'; font-size: 0.9rem; }
+
+        /* UI OVERLAY */
+        #ui-layer {
+            position: absolute; width: 100%; height: 100%;
+            display: flex; justify-content: center; align-items: center; z-index: 2000;
+        }
+        .window { background: var(--ui-bg); border: 1px solid #222; padding: 50px; width: 420px; box-shadow: 0 30px 60px rgba(0,0,0,0.8); }
+        h2 { font-weight: 900; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 30px; border-bottom: 1px solid #222; padding-bottom: 10px; }
+        .btn {
+            display: block; width: 100%; background: none; border: 1px solid #333;
+            color: #fff; padding: 15px; margin: 10px 0; cursor: pointer;
+            font-family: 'Inter'; text-transform: uppercase; letter-spacing: 2px; transition: 0.2s;
+        }
+        .btn:hover { background: #fff; color: #000; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+        .card { border: 1px solid #222; padding: 15px; cursor: pointer; text-align: center; background: rgba(255,255,255,0.02); }
+        .card:hover { border-color: #fff; }
+        .hidden { display: none !important; }
+
+        canvas { display: block; margin: 0 auto; filter: contrast(1.05) saturate(1.1); }
+    </style>
+</head>
+<body>
+
+<nav>
+    <div class="engine-id">APEX<span>_DRIVE.v2</span></div>
+    <div class="stats-group">
+        <div class="stat-item">CREDITS: <span id="money-val" style="color:#fff">0</span></div>
+        <div class="stat-item">VELOCITY: <span id="speed-val" style="color:#fff">0</span> KM/H</div>
+    </div>
+</nav>
+
+<div id="ui-layer">
+    <div id="main-menu" class="window">
+        <h2>SESSION_START</h2>
+        <button class="btn" onclick="Game.start()">INITIALIZE</button>
+        <button class="btn" onclick="UI.show('garage-menu')">GARAGE</button>
+        <button class="btn" onclick="UI.show('settings-menu')">SETTINGS</button>
+    </div>
+
+    <div id="garage-menu" class="window hidden">
+        <h2>FLEET</h2>
+        <div class="grid">
+            <div class="card" onclick="Shop.buy('R-PROTO', 0, '#cc0000')">R-PROTO</div>
+            <div class="card" onclick="Shop.buy('SHADOW', 1500, '#111111')">SHADOW</div>
+            <div class="card" onclick="Shop.buy('GTR-SPEC', 3000, '#2244ff')">GTR-SPEC</div>
+            <div class="card" onclick="Shop.buy('CONCEPT-X', 8000, '#ffffff')">CONCEPT-X</div>
+        </div>
+        <button class="btn" style="margin-top:20px" onclick="UI.show('main-menu')">BACK</button>
+    </div>
+
+    <div id="settings-menu" class="window hidden">
+        <h2>CONFIG</h2>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin:20px 0;">
+            <span>LUMINOSITÉ</span>
+            <button class="btn" style="width:120px; margin:0" id="time-toggle" onclick="Game.toggleTime()">DAY</button>
+        </div>
+        <button class="btn" onclick="UI.show('main-menu')">BACK</button>
+    </div>
+</div>
+
+<canvas id="gameCanvas"></canvas>
+
+<script>
+const Game = {
+    canvas: document.getElementById('gameCanvas'),
+    ctx: document.getElementById('gameCanvas').getContext('2d'),
+    active: false,
+    money: parseInt(localStorage.getItem('sim_money')) || 0,
+    timeMode: 'DAY', 
+    currentSpeed: 0,
+    maxSpeed: 12,
+    roadWidth: 320,
+    laneWidth: 106,
+
+    init() {
+        this.canvas.width = 600;
+        this.canvas.height = window.innerHeight;
+        this.player = { x: 300 - 27, y: this.canvas.height - 220, w: 54, h: 105, color: '#cc0000', vx: 0, rotation: 0 };
+        this.enemies = [];
+        this.roadOffset = 0;
+        document.getElementById('money-val').innerText = this.money;
+        this.loop();
+    },
+
+    toggleTime() {
+        this.timeMode = this.timeMode === 'DAY' ? 'NIGHT' : 'DAY';
+        document.getElementById('time-toggle').innerText = this.timeMode;
+    },
+
+    start() {
+        document.getElementById('ui-layer').classList.add('hidden');
+        this.active = true;
+        this.enemies = [];
+        this.currentSpeed = 0;
+    },
+
+    spawnEnemy() {
+        if (Math.random() < 0.04 && this.enemies.length < 3) {
+            const lane = Math.floor(Math.random() * 3);
+            const x = (this.canvas.width - this.roadWidth)/2 + (lane * this.laneWidth) + (this.laneWidth/2 - 27);
+            this.enemies.push({ x, y: -200, w: 54, h: 105, speed: 6 + Math.random() * 2, color: '#252528' });
+        }
+    },
+
+    update() {
+        if (!this.active) return;
+
+        // ACCELERATION & CONTROLS
+        if (Input.keys['z'] || Input.keys['Z']) { this.currentSpeed += (this.maxSpeed - this.currentSpeed) * 0.05; } 
+        else if (Input.keys['s'] || Input.keys['S']) { this.currentSpeed *= 0.95; }
+        else { this.currentSpeed *= 0.99; }
+
+        if (Input.keys['q'] || Input.keys['Q']) { this.player.vx -= 1.2; this.player.rotation = -0.1; }
+        else if (Input.keys['d'] || Input.keys['D']) { this.player.vx += 1.2; this.player.rotation = 0.1; }
+        else { this.player.rotation *= 0.8; }
+
+        this.player.vx *= 0.85;
+        this.player.x += this.player.vx;
+        this.roadOffset += this.currentSpeed;
+        
+        document.getElementById('speed-val').innerText = Math.floor(this.currentSpeed * 20);
+
+        // ROAD LIMITS
+        const startX = (this.canvas.width - this.roadWidth) / 2;
+        if (this.player.x < startX - 10 || this.player.x > startX + this.roadWidth - this.player.w + 10) this.gameOver();
+
+        this.spawnEnemy();
+        this.enemies.forEach((en, i) => {
+            en.y += en.speed + (this.currentSpeed - 8);
+            if (this.rectIntersect(this.player, en)) this.gameOver();
+            if (en.y > this.canvas.height) {
+                this.enemies.splice(i, 1);
+                this.money += 20;
+                document.getElementById('money-val').innerText = this.money;
+            }
+        });
+    },
+
+    drawCar(x, y, w, h, color, rot, isPlayer) {
+        const ctx = this.ctx;
+        ctx.save();
+        ctx.translate(x + w/2, y + h/2);
+        ctx.rotate(rot);
+
+        // SHADOW
+        ctx.fillStyle = 'rgba(0,0,0,0.3)';
+        ctx.fillRect(-w/2 + 5, -h/2 + 5, w, h);
+
+        // BODY
+        ctx.fillStyle = color;
+        this.roundRect(ctx, -w/2, -h/2, w, h, 8);
+        ctx.fill();
+
+        // GLASS
+        ctx.fillStyle = '#0a0a0a';
+        ctx.fillRect(-w/2 + 8, -h/2 + 20, w - 16, 40);
+        ctx.fillStyle = color;
+        ctx.fillRect(-w/2 + 10, -h/2 + 30, w - 20, 25);
+
+        // LIGHTS
+        ctx.fillStyle = '#fff';
+        ctx.shadowBlur = (this.timeMode === 'NIGHT') ? 20 : 0; ctx.shadowColor = '#fff';
+        ctx.fillRect(-w/2 + 4, -h/2 + 2, 14, 5);
+        ctx.fillRect(w/2 - 18, -h/2 + 2, 14, 5);
+
+        // BRAKES
+        ctx.shadowBlur = (isPlayer && Input.keys['s']) ? 20 : 0; ctx.shadowColor = 'red';
+        ctx.fillStyle = (isPlayer && Input.keys['s']) ? '#ff0000' : '#440000';
+        ctx.fillRect(-w/2 + 4, h/2 - 7, 15, 4);
+        ctx.fillRect(w/2 - 19, h/2 - 7, 15, 4);
+
+        ctx.restore();
+    },
+
+    roundRect(ctx, x, y, w, h, r) {
+        ctx.beginPath(); ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+        ctx.quadraticCurveTo(x + w, y, x + w, y + r); ctx.lineTo(x + w, y + h - r);
+        ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h); ctx.lineTo(x + r, y + h);
+        ctx.quadraticCurveTo(x, y + h, x, y + h - r); ctx.lineTo(x, y + r);
+        ctx.quadraticCurveTo(x, y, x + r, y); ctx.closePath();
+    },
+
+    draw() {
+        const ctx = this.ctx;
+        const startX = (this.canvas.width - this.roadWidth) / 2;
+
+        ctx.fillStyle = this.timeMode === 'DAY' ? '#1a1a1e' : '#050507';
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+
+        // ROAD
+        ctx.fillStyle = this.timeMode === 'DAY' ? '#2c2c32' : '#0f0f11';
+        ctx.fillRect(startX, 0, this.roadWidth, this.canvas.height);
+
+        // DASHED LINES
+        ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+        ctx.setLineDash([40, 60]);
+        ctx.lineDashOffset = -this.roadOffset;
+        ctx.lineWidth = 4;
+        for(let i = 1; i < 3; i++) {
+            ctx.beginPath(); ctx.moveTo(startX + i * this.laneWidth, 0); ctx.lineTo(startX + i * this.laneWidth, this.canvas.height); ctx.stroke();
+        }
+
+        // SMOOTH CURBS (No blink)
+        ctx.setLineDash([]);
+        const curbColor = (Math.floor(this.roadOffset/60) % 2 === 0);
+        ctx.fillStyle = curbColor ? '#eee' : '#bb0000';
+        ctx.fillRect(startX - 10, 0, 10, this.canvas.height);
+        ctx.fillRect(startX + this.roadWidth, 0, 10, this.canvas.height);
+
+        this.enemies.forEach(en => this.drawCar(en.x, en.y, en.w, en.h, en.color, 0, false));
+        this.drawCar(this.player.x, this.player.y, this.player.w, this.player.h, this.player.color, this.player.rotation, true);
+        
+        if(this.timeMode === 'NIGHT') {
+            ctx.fillStyle = 'rgba(0,0,0,0.4)';
+            ctx.fillRect(0,0,this.canvas.width, this.canvas.height);
+        }
+    },
+
+    rectIntersect(a, b) { return (a.x < b.x + b.w - 12 && a.x + a.w - 12 > b.x && a.y < b.y + b.h - 12 && a.y + a.h - 12 > b.y); },
+    gameOver() { this.active = false; localStorage.setItem('sim_money', this.money); location.reload(); },
+    loop() { this.update(); this.draw(); requestAnimationFrame(() => this.loop()); }
+};
+
+const UI = { show(id) { document.querySelectorAll('.window').forEach(w => w.classList.add('hidden')); document.getElementById(id).classList.remove('hidden'); } };
+const Shop = { buy(name, price, color) { if (Game.money >= price) { Game.money -= price; Game.player.color = color; document.getElementById('money-val').innerText = Game.money; localStorage.setItem('sim_money', Game.money); UI.show('main-menu'); } else alert("INSUFFICIENT FUNDS"); } };
+const Input = { keys: {}, init() { window.addEventListener('keydown', e => this.keys[e.key] = true); window.addEventListener('keyup', e => this.keys[e.key] = false); } };
+
+Input.init(); Game.init();
+</script>
+</body>
+</html>
